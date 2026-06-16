@@ -4,6 +4,8 @@ import re
 import json
 from pathlib import Path
 
+GECERLI_KATEGORILER = ["ayakkabı", "kıyafet"]
+
 
 def get_user_contents(sku: str, from_value: int = 0, size: int = 100):
     url = "https://user-content-gw-hermes.hepsiburada.com/queryapi/v2/ApprovedUserContents"
@@ -66,10 +68,13 @@ def _extract_reviews(raw_text: str) -> list[dict[str, object]]:
 
 
 def _write_comments_to_csv(
-    sku: str, reviews: list[dict[str, object]], output_path: Path
+    sku: str,
+    reviews: list[dict[str, object]],
+    output_path: Path,
+    kategori: str,
 ) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    fieldnames = ["item", "order", "comment", "star"]
+    fieldnames = ["item", "order", "comment", "star", "kategori"]
     existing_rows: list[dict[str, object]] = []
     write_mode = "a"
 
@@ -88,6 +93,7 @@ def _write_comments_to_csv(
                             "order": row.get("order"),
                             "comment": row.get("comment"),
                             "star": row.get("star", ""),
+                            "kategori": row.get("kategori", ""),
                         }
                     )
 
@@ -104,12 +110,12 @@ def _write_comments_to_csv(
                     "order": idx,
                     "comment": review["comment"],
                     "star": review.get("star"),
+                    "kategori": kategori,
                 }
             )
 
 
 def _sku_zaten_var(sku: str, csv_path: Path) -> bool:
-    """CSV'de bu SKU'nun yorumları zaten varsa True döndürür."""
     if not csv_path.exists() or csv_path.stat().st_size == 0:
         return False
     with csv_path.open("r", newline="", encoding="utf-8") as f:
@@ -120,7 +126,10 @@ def _sku_zaten_var(sku: str, csv_path: Path) -> bool:
     return False
 
 
-def get_all_user_contents(sku: str) -> tuple[int, int]:
+def get_all_user_contents(sku: str, kategori: str) -> tuple[int, int]:
+    if kategori not in GECERLI_KATEGORILER:
+        raise ValueError(f"Geçersiz kategori: {kategori!r}. Seçenekler: {GECERLI_KATEGORILER}")
+
     csv_path = Path(__file__).resolve().parent / "data" / "user_contents.csv"
 
     if _sku_zaten_var(sku, csv_path):
@@ -148,7 +157,7 @@ def get_all_user_contents(sku: str) -> tuple[int, int]:
         if (total_item_count - from_value) <= 0:
             break
 
-    _write_comments_to_csv(sku=sku, reviews=all_reviews, output_path=csv_path)
+    _write_comments_to_csv(sku=sku, reviews=all_reviews, output_path=csv_path, kategori=kategori)
     return total_item_count, len(all_reviews)
 
 
@@ -182,22 +191,31 @@ def yorumlari_cek(sku: str) -> list[dict[str, object]]:
 
 
 if __name__ == "__main__":
-    # Yorumlarını çekmek istediğin ürün ID'lerini buraya ekle
+    import argparse
+
+    parser = argparse.ArgumentParser(description="HepsiBurada yorum scraper")
+    parser.add_argument(
+        "--kategori",
+        choices=GECERLI_KATEGORILER,
+        required=True,
+        help="Ürün kategorisi: ayakkabı veya kıyafet",
+    )
+    args = parser.parse_args()
+
+    # Scrape etmek istediğin ürün SKU'larını buraya ekle
     URUN_LISTESI = [
-        "HBCV00005QG5TV",
-        "HBCV0000CJ0SKA",
-        "HBCV000095F10F",
-        "HBV00000GU1HH",
+        "HBCV00002IK55R",
+        "HBV00000TWIIZ",
     ]
 
     toplam_yorum = 0
     for sku in URUN_LISTESI:
-        print(f"\n{'─'*40}")
-        print(f"Ürün: {sku}")
-        item_count, comment_count = get_all_user_contents(sku)
+        print(f"\n{'-'*40}")
+        print(f"Urun: {sku}  |  Kategori: {args.kategori}")
+        item_count, comment_count = get_all_user_contents(sku, kategori=args.kategori)
         print(f"  totalItemCount : {item_count}")
         print(f"  saved comments : {comment_count}")
         toplam_yorum += comment_count
 
-    print(f"\n{'═'*40}")
+    print(f"\n{'='*40}")
     print(f"TOPLAM: {toplam_yorum} yorum kaydedildi.")

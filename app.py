@@ -1,9 +1,9 @@
 """
-Streamlit demo uygulaması.
+Streamlit demo uygulaması — Kategori bazlı sentiment analizi.
 
 İki mod:
-  1) Kayıtlı Ürünler — Önceden analiz edilmiş JSON'dan sonuçları gösterir.
-  2) Yeni Ürün Analizi — Ürün ID'si girilerek canlı scrape + analiz yapılır.
+  1) Kayıtlı Ürünler  — Önceden analiz edilmiş JSON'dan sonuçları gösterir.
+  2) Yeni Ürün Analizi — Ürün ID'si + kategori girerek canlı scrape + analiz yapar.
 
 Çalıştırma:
     streamlit run app.py
@@ -15,11 +15,23 @@ import streamlit as st
 from pathlib import Path
 
 PROJE_KOKU = Path(__file__).resolve().parent
-JSON_YOLU = PROJE_KOKU / "sonuclar" / "urun_analiz.json"
+JSON_YOLU  = PROJE_KOKU / "sonuclar" / "urun_analiz.json"
 MODEL_YOLU = PROJE_KOKU / "sonuclar" / "model" / "best_model"
 
 sys.path.insert(0, str(PROJE_KOKU))
 sys.path.insert(0, str(PROJE_KOKU / "src" / "scraper"))
+
+# .env dosyasını yükle (varsa)
+try:
+    from dotenv import load_dotenv
+    load_dotenv(PROJE_KOKU / ".env")
+except ImportError:
+    pass
+
+KATEGORI_ETIKETLER = {
+    "ayakkabı": "👟 Ayakkabı",
+    "kıyafet":  "👕 Kıyafet",
+}
 
 
 @st.cache_data
@@ -33,64 +45,104 @@ def json_yukle(json_yolu: str) -> dict:
 
 @st.cache_resource
 def model_yukle():
-    """Modeli bir kez yükleyip cache'le."""
     from model.predict import modeli_yukle
     return modeli_yukle(MODEL_YOLU)
 
 
-def sonuclari_goster(urun: dict):
-    """Bir ürünün analiz sonuçlarını gösterir."""
-    ozet = urun.get("ozet", {})
-    artilar = urun.get("artilar", [])
-    eksiler = urun.get("eksiler", [])
+def _gemini_api_key() -> str:
+    """API key'i önce Streamlit secrets'tan, sonra env'den alır."""
+    try:
+        return st.secrets["GEMINI_API_KEY"]
+    except Exception:
+        import os
+        return os.getenv("GEMINI_API_KEY", "")
+
+
+def gemini_bolumu_goster(maddeler: list[str], kategori: str):
+    """Yapay zeka ile üretilmiş akıcı özeti gösterir."""
+    api_key = _gemini_api_key()
+    if not api_key:
+        print("[app] GEMINI_API_KEY bulunamadı.")
+        return
+
+    st.subheader("✨ Yapay Zeka Değerlendirmesi")
+    with st.spinner("Değerlendirme hazırlanıyor..."):
+        from model.gemini_ozet import gemini_ozet_uret
+        ozet = gemini_ozet_uret(maddeler, kategori=kategori, api_key=api_key)
+
+    if ozet:
+        st.info(ozet)
+    else:
+        st.warning("Değerlendirme üretilemedi. Terminaldeki hata mesajını kontrol edin.")
+
+
+def ozet_maddeleri_goster(maddeler: list[str], kategori: str):
+    if maddeler:
+        gemini_bolumu_goster(maddeler, kategori)
+    else:
+        st.info("Özet oluşturmak için yeterli veri bulunamadı.")
+
+
+def detay_kartlari_goster(urun: dict):
+    """Artı / eksi / tartışmalı konu kartlarını gösterir."""
+    ozet       = urun.get("ozet", {})
+    artilar    = urun.get("artilar", [])
+    eksiler    = urun.get("eksiler", [])
     tartismali = urun.get("tartismali", [])
 
     k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Toplam Yorum", ozet.get("toplam_yorum", 0))
-    k2.metric("Pozitif Cümle", ozet.get("pozitif_cumle", 0))
-    k3.metric("Negatif Cümle", ozet.get("negatif_cumle", 0))
+    k1.metric("Toplam Yorum",   ozet.get("toplam_yorum", 0))
+    k2.metric("Pozitif Cümle",  ozet.get("pozitif_cumle", 0))
+    k3.metric("Negatif Cümle",  ozet.get("negatif_cumle", 0))
     k4.metric("Tartışmalı Konu", len(tartismali))
 
     st.divider()
-
     sol, sag = st.columns(2)
 
     with sol:
         st.subheader("✅ Güçlü Yönler")
         if artilar:
             for item in artilar:
-                sayi = item.get("sayi", 0)
-                st.success(f"**{item['baslik']}**\n\n_{sayi} kullanıcı bu görüşte_")
+                st.success(f"**{item['baslik']}**\n\n_{item.get('sayi', 0)} kullanıcı bu görüşte_")
         else:
-            st.info("Bu ürün için belirgin güçlü yön bulunamadı.")
+            st.info("Belirgin güçlü yön bulunamadı.")
 
     with sag:
         st.subheader("❌ Zayıf Yönler")
         if eksiler:
             for item in eksiler:
-                sayi = item.get("sayi", 0)
-                st.error(f"**{item['baslik']}**\n\n_{sayi} kullanıcı bu görüşte_")
+                st.error(f"**{item['baslik']}**\n\n_{item.get('sayi', 0)} kullanıcı bu görüşte_")
         else:
-            st.info("Bu ürün için belirgin zayıf yön bulunamadı.")
+            st.info("Belirgin zayıf yön bulunamadı.")
 
     if tartismali:
         st.divider()
         st.subheader("⚖️ Tartışmalı Konular")
-        st.caption("Bu konularda kullanıcı görüşleri bölünmüş durumda.")
         for item in tartismali:
-            poz = item.get("pozitif", 0)
-            neg = item.get("negatif", 0)
-            toplam = poz + neg
+            poz      = item.get("pozitif", 0)
+            neg      = item.get("negatif", 0)
+            toplam   = poz + neg
             poz_yuzde = int(poz / toplam * 100) if toplam > 0 else 0
             st.warning(f"**{item['baslik']}**\n\n{item.get('detay', '')}")
             st.progress(poz_yuzde / 100, text=f"Olumlu %{poz_yuzde}  —  Olumsuz %{100 - poz_yuzde}")
 
-    with st.expander("Ham JSON çıktısı"):
+
+def sonuclari_goster(urun: dict):
+    """Bir ürünün analiz sonuçlarını gösterir: önce özet, sonra detaylar."""
+    kategori      = urun.get("kategori", "ayakkabı")
+    ozet_maddeleri = urun.get("ozet_maddeleri", [])
+
+    ozet_maddeleri_goster(ozet_maddeleri, kategori)
+
+    st.divider()
+    with st.expander("📊 Konu Bazlı Detay", expanded=False):
+        detay_kartlari_goster(urun)
+
+    with st.expander("Ham JSON çıktısı", expanded=False):
         st.json(urun)
 
 
 def tab_kayitli_urunler():
-    """Önceden analiz edilmiş ürünleri gösterir."""
     veri = json_yukle(str(JSON_YOLU))
 
     if not veri:
@@ -101,23 +153,30 @@ def tab_kayitli_urunler():
         return
 
     urun_ids = list(veri.keys())
-    secilen = st.selectbox("Ürün ID seçin:", urun_ids, index=0)
+    secilen  = st.selectbox("Ürün ID seçin:", urun_ids, index=0)
 
     if secilen:
         sonuclari_goster(veri[secilen])
 
 
 def tab_yeni_urun():
-    """Yeni bir ürün ID'si girip canlı analiz yapma."""
     st.info(
-        "HepsiBurada ürün sayfasındaki SKU kodunu girin. "
+        "HepsiBurada ürün sayfasındaki SKU kodunu ve ürün kategorisini girin. "
         "Sistem yorumları çekip analiz edecektir."
     )
 
-    urun_id = st.text_input(
-        "Ürün ID (SKU):",
-        placeholder="Örn: HBCV00005QG5TV",
-    )
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        urun_id = st.text_input(
+            "Ürün ID (SKU):",
+            placeholder="Örn: HBCV00005QG5TV",
+        )
+    with col2:
+        kategori = st.selectbox(
+            "Kategori:",
+            options=list(KATEGORI_ETIKETLER.keys()),
+            format_func=lambda k: KATEGORI_ETIKETLER[k],
+        )
 
     if not urun_id:
         return
@@ -133,7 +192,6 @@ def tab_yeni_urun():
             return
 
         with st.status("Analiz devam ediyor...", expanded=True) as durum:
-            # 1) Yorumları çek
             st.write("📥 Yorumlar çekiliyor...")
             try:
                 from asd import yorumlari_cek
@@ -150,16 +208,15 @@ def tab_yeni_urun():
             yorum_metinleri = [r["comment"] for r in yorumlar_raw]
             st.write(f"✅ {len(yorum_metinleri)} yorum çekildi.")
 
-            # 2) Model yükle
             st.write("🧠 Model yükleniyor...")
             model, tokenizer, cihaz = model_yukle()
             st.write(f"✅ Model hazır. (Cihaz: {cihaz})")
 
-            # 3) Analiz
             st.write("📊 Yorumlar analiz ediliyor...")
             from model.predict import yorumlari_analiz_et
             analiz = yorumlari_analiz_et(
-                yorum_metinleri, model, tokenizer, cihaz
+                yorum_metinleri, model, tokenizer, cihaz,
+                kategori=kategori,
             )
 
             durum.update(label="Analiz tamamlandı!", state="complete")
@@ -178,8 +235,8 @@ def ana_sayfa():
 
     st.title("🔍 Türkçe Yorum Sentiment Analizi")
     st.markdown(
-        "Ürün yorumlarını konu bazlı analiz eden BERT tabanlı sistem. "
-        "Benzer yorumlar gruplanır, çelişkili konular ayrıca gösterilir."
+        "Ürün yorumlarını **kategori bazlı** analiz eden BERT tabanlı sistem. "
+        "Ayakkabı ve kıyafet için ayrı konu tanımları ve doğal dil özetleri üretir."
     )
     st.divider()
 

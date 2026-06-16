@@ -1,3 +1,6 @@
+# Gizli anahtarlar
+.env
+
 # Model dosyaları (çok büyük)
 sonuclar/
 sonuclar_model.zip
