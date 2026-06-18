@@ -49,36 +49,24 @@ def model_yukle():
     return modeli_yukle(MODEL_YOLU)
 
 
-def _gemini_api_key() -> str:
-    """API key'i önce Streamlit secrets'tan, sonra env'den alır."""
-    try:
-        return st.secrets["GEMINI_API_KEY"]
-    except Exception:
-        import os
-        return os.getenv("GEMINI_API_KEY", "")
 
+def ozet_bolumu_goster(maddeler: list[str], kategori: str):
+    """Gemini ile üretilmiş akıcı özeti gösterir."""
+    st.subheader("✨ Değerlendirme")
+    from model.yerel_ozet import yerel_ozet_uret
 
-def gemini_bolumu_goster(maddeler: list[str], kategori: str):
-    """Yapay zeka ile üretilmiş akıcı özeti gösterir."""
-    api_key = _gemini_api_key()
-    if not api_key:
-        print("[app] GEMINI_API_KEY bulunamadı.")
-        return
-
-    st.subheader("✨ Yapay Zeka Değerlendirmesi")
-    with st.spinner("Değerlendirme hazırlanıyor..."):
-        from model.gemini_ozet import gemini_ozet_uret
-        ozet = gemini_ozet_uret(maddeler, kategori=kategori, api_key=api_key)
+    with st.spinner("Özet üretiliyor..."):
+        ozet = yerel_ozet_uret(maddeler, kategori=kategori)
 
     if ozet:
         st.info(ozet)
     else:
-        st.warning("Değerlendirme üretilemedi. Terminaldeki hata mesajını kontrol edin.")
+        st.warning("Değerlendirme üretilemedi.")
 
 
 def ozet_maddeleri_goster(maddeler: list[str], kategori: str):
     if maddeler:
-        gemini_bolumu_goster(maddeler, kategori)
+        ozet_bolumu_goster(maddeler, kategori)
     else:
         st.info("Özet oluşturmak için yeterli veri bulunamadı.")
 
